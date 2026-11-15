@@ -65,6 +65,11 @@ fn choose_file_to_keep<'a>(paths: &'a [PathBuf]) -> &'a PathBuf {
         .unwrap()
 }
 
+// Archivos que irian a la papelera: todos menos el conservado de cada grupo
+fn count_to_trash(grupos: &[(String, Vec<PathBuf>)]) -> usize {
+    grupos.iter().map(|(_, v)| v.len() - 1).sum()
+}
+
 fn read_line() -> String {
     let mut input = String::new();
     io::stdin().read_line(&mut input).unwrap();
@@ -141,7 +146,7 @@ fn main() {
     let fecha = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
     let archivo_salida = directorio.join(format!("duplicados_{}.txt", fecha));
 
-    let mut total_duplicados: usize = 0;
+    let total_duplicados = count_to_trash(&grupos);
     let mut lineas: Vec<String> = Vec::new();
     lineas.push("INFORME DE ARCHIVOS DUPLICADOS".to_string());
     lineas.push(format!("Directorio analizado: {}", directorio.display()));
@@ -153,7 +158,6 @@ fn main() {
         lineas.push(format!("--- Grupo {} (Hash MD5: {}) ---", i + 1, hash));
         for ruta in rutas {
             lineas.push(format!("  {}", ruta.display()));
-            total_duplicados += 1;
         }
         lineas.push(String::new());
     }
@@ -264,5 +268,14 @@ mod tests {
     fn all_copies_keeps_shortest_name() {
         let p = paths(&["foto (12).jpg", "foto (1).jpg"]);
         assert_eq!(choose_file_to_keep(&p), &PathBuf::from("foto (1).jpg"));
+    }
+
+    #[test]
+    fn count_to_trash_excludes_kept_file() {
+        let grupos = vec![
+            ("a".to_string(), paths(&["x.jpg", "x (1).jpg"])),
+            ("b".to_string(), paths(&["y.jpg", "y (1).jpg", "y (2).jpg"])),
+        ];
+        assert_eq!(count_to_trash(&grupos), 3);
     }
 }
