@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use chrono::Local;
 use rayon::prelude::*;
@@ -28,18 +29,47 @@ fn paths_to_hash(files: Vec<(PathBuf, u64)>) -> Vec<PathBuf> {
     by_size.into_values().filter(|v| v.len() > 1).flatten().collect()
 }
 
+fn texto_progreso(hechos: usize, total: usize) -> String {
+    format!("Analizados {} de {} (quedan {})", hechos, total, total - hechos)
+}
+
+// Escribir en la consola es lento: mostrar cada 1% y siempre el ultimo
+fn toca_mostrar(hechos: usize, total: usize) -> bool {
+    hechos == total || hechos % (total / 100).max(1) == 0
+}
+
 // Calcula hashes en paralelo de los candidatos y devuelve los grupos con duplicados, ordenados por hash
 fn find_duplicate_groups(files: Vec<(PathBuf, u64)>) -> Vec<(String, Vec<PathBuf>)> {
-    let results: Vec<(PathBuf, String)> = paths_to_hash(files)
+    let total_archivos = files.len();
+    let candidatos = paths_to_hash(files);
+    let total = candidatos.len();
+    println!(
+        "{} de {} tienen el mismo tamaño que otro archivo; solo hay que leer esos.",
+        total, total_archivos
+    );
+
+    // Mutex: contar e imprimir juntos, asi el contador nunca retrocede en pantalla
+    let hechos = Mutex::new(0usize);
+    let results: Vec<(PathBuf, String)> = candidatos
         .into_par_iter()
-        .filter_map(|path| match compute_md5(&path) {
-            Some(hash) => Some((path, hash)),
-            None => {
-                eprintln!("  No se pudo leer: {}", path.display());
-                None
+        .filter_map(|path| {
+            let hash = compute_md5(&path);
+            if hash.is_none() {
+                eprintln!("\n  No se pudo leer: {}", path.display());
             }
+            let mut n = hechos.lock().unwrap();
+            *n += 1;
+            if toca_mostrar(*n, total) {
+                // \r vuelve al inicio de la linea: el contador se actualiza en el sitio
+                eprint!("\r{}   ", texto_progreso(*n, total));
+            }
+            drop(n);
+            hash.map(|h| (path, h))
         })
         .collect();
+    if total > 0 {
+        eprintln!();
+    }
 
     let mut hashes: HashMap<String, Vec<PathBuf>> = HashMap::new();
     for (path, hash) in results {
@@ -166,7 +196,7 @@ fn main() {
         return;
     }
 
-    println!("Encontrados {} archivos. Calculando hashes en paralelo...", archivos.len());
+    println!("Encontrados {} fotos y videos.", archivos.len());
 
     // 3-5. Agrupar por tamaño, hashear solo los de tamaño repetido y agrupar por hash
     let grupos = find_duplicate_groups(archivos);
@@ -393,6 +423,24 @@ mod tests {
         for op in ["--version", "-v"] {
             assert_eq!(parse_args(&args(&[op]), Path::new(".")).map(|c| c.accion), Ok(Accion::Version), "{}", op);
         }
+    }
+
+    #[test]
+    fn texto_de_progreso_dice_hechos_total_y_quedan() {
+        assert_eq!(texto_progreso(3, 10), "Analizados 3 de 10 (quedan 7)");
+        assert_eq!(texto_progreso(10, 10), "Analizados 10 de 10 (quedan 0)");
+    }
+
+    #[test]
+    fn progreso_se_muestra_cada_1_por_ciento_y_al_final() {
+        // 1000 archivos: cada 10, y siempre el ultimo
+        assert!(toca_mostrar(10, 1000));
+        assert!(!toca_mostrar(11, 1000));
+        assert!(toca_mostrar(1000, 1000));
+        // pocos archivos: todos
+        assert!(toca_mostrar(1, 5) && toca_mostrar(2, 5));
+        // el ultimo aunque no caiga en el paso
+        assert!(toca_mostrar(1005, 1005));
     }
 
     #[test]
