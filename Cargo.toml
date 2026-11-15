@@ -1,0 +1,11 @@
+[package]
+name = "buscar-duplicados"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+walkdir = "2"
+md5 = "0.7"
+chrono = { version = "0.4", features = ["clock"] }
+rayon = "1"
+trash = "3"
