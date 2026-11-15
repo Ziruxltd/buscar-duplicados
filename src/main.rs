@@ -3,26 +3,18 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
 use rayon::prelude::*;
 use walkdir::WalkDir;
 
-// Calcula el hash MD5 de un archivo usando un buffer grande para I/O eficiente
+// Calcula el hash MD5 de un archivo (md5::Context implementa Write)
 fn compute_md5(path: &Path) -> Option<String> {
-    let file = File::open(path).ok()?;
-    let mut reader = BufReader::with_capacity(1024 * 1024, file);
+    let mut file = File::open(path).ok()?;
     let mut context = md5::Context::new();
-    let mut buffer = [0u8; 65536];
-    loop {
-        let n = reader.read(&mut buffer).ok()?;
-        if n == 0 {
-            break;
-        }
-        context.consume(&buffer[..n]);
-    }
+    io::copy(&mut file, &mut context).ok()?;
     Some(format!("{:x}", context.compute()))
 }
 
@@ -235,5 +227,29 @@ fn main() {
     println!("  Archivos enviados a papelera : {}", borrados);
     if errores > 0 {
         println!("  Errores                      : {}", errores);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Directorio temporal propio para cada test; el test lo borra al terminar
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("buscar_duplicados_{}_{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn compute_md5_de_contenido_conocido() {
+        let dir = temp_dir("md5");
+        let f = dir.join("hello.txt");
+        std::fs::write(&f, b"hello").unwrap();
+        let hash = compute_md5(&f);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(hash.as_deref(), Some("5d41402abc4b2a76b9719d911017c592"));
     }
 }
