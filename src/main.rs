@@ -45,7 +45,11 @@ fn has_copy_pattern(stem: &str) -> bool {
         if let Some(open) = s.rfind('(') {
             let inside = &s[open + 1..s.len() - 1];
             let before = s[..open].trim_end();
-            if !before.is_empty() && !inside.is_empty() && inside.chars().all(|c| c.is_ascii_digit()) {
+            // 1-3 digitos como Windows " (1)"; 4 digitos suele ser un año: "Boda (2023)"
+            if !before.is_empty()
+                && (1..=3).contains(&inside.len())
+                && inside.chars().all(|c| c.is_ascii_digit())
+            {
                 return true;
             }
         }
@@ -56,7 +60,8 @@ fn has_copy_pattern(stem: &str) -> bool {
 // Elige que archivo conservar dentro de un grupo de duplicados:
 // 1. Prefiere los que NO tienen patron " (N)"
 // 2. Entre los candidatos, elige el de nombre mas corto
-fn choose_file_to_keep<'a>(paths: &'a [PathBuf]) -> &'a PathBuf {
+// 3. Empate: el de fecha de modificacion mas antigua, y luego la ruta alfabetica
+fn choose_file_to_keep(paths: &[PathBuf]) -> &PathBuf {
     let without_copy: Vec<&PathBuf> = paths
         .iter()
         .filter(|p| {
@@ -73,7 +78,11 @@ fn choose_file_to_keep<'a>(paths: &'a [PathBuf]) -> &'a PathBuf {
 
     candidates
         .into_iter()
-        .min_by_key(|p| p.file_name().and_then(|n| n.to_str()).unwrap_or("").len())
+        .min_by_key(|p| {
+            let len = p.file_name().and_then(|n| n.to_str()).unwrap_or("").len();
+            let modified = std::fs::metadata(p).and_then(|m| m.modified()).ok();
+            (len, modified, *p)
+        })
         .unwrap()
 }
 
@@ -301,5 +310,53 @@ mod tests {
         assert!(!is_media(Path::new("desktop.ini")));
         assert!(!is_media(Path::new("Thumbs.db")));
         assert!(!is_media(Path::new("sin_extension")));
+    }
+
+    #[test]
+    fn year_in_parentheses_is_not_copy() {
+        assert!(!has_copy_pattern("Boda (2023)"));
+        assert!(has_copy_pattern("Boda (123)"));
+    }
+
+    #[test]
+    fn year_named_original_kept_over_copy() {
+        let p = paths(&["Boda (2023) (1).jpg", "Boda (2023).jpg"]);
+        assert_eq!(choose_file_to_keep(&p), &PathBuf::from("Boda (2023).jpg"));
+    }
+
+    // Crea los archivos en un directorio temporal con la fecha de modificacion indicada (segundos)
+    fn make_files(test: &str, files: &[(&str, u64)]) -> (PathBuf, Vec<PathBuf>) {
+        let root = std::env::temp_dir().join(format!("buscar_dup_{}_{}", test, std::process::id()));
+        let mut out = Vec::new();
+        for (rel, secs) in files {
+            let p = root.join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            let f = File::create(&p).unwrap();
+            f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(*secs)).unwrap();
+            out.push(p);
+        }
+        (root, out)
+    }
+
+    #[test]
+    fn same_name_length_keeps_oldest_modified() {
+        let (root, p) = make_files(
+            "mtime",
+            &[("Descargas/IMG_1.jpg", 2_000_000_000), ("Viaje Roma/IMG_1.jpg", 1_000_000_000)],
+        );
+        let kept = choose_file_to_keep(&p).clone();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(kept, p[1]);
+    }
+
+    #[test]
+    fn same_name_and_mtime_keeps_alphabetical_path() {
+        let (root, p) = make_files(
+            "path",
+            &[("Viaje Roma/IMG_1.jpg", 1_000_000_000), ("Descargas/IMG_1.jpg", 1_000_000_000)],
+        );
+        let kept = choose_file_to_keep(&p).clone();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(kept, p[1]);
     }
 }
