@@ -126,16 +126,20 @@ fn read_line() -> String {
 }
 
 fn main() {
-    // 1. Pedir directorio en bucle hasta que exista
-    let directorio: PathBuf = loop {
-        print!("\nIntroduce la ruta del directorio: ");
-        io::stdout().flush().unwrap();
-        let input = read_line();
-        let path = PathBuf::from(&input);
-        if path.is_dir() {
-            break path;
-        } else {
-            eprintln!("ERROR: El directorio '{}' no existe. Intentalo de nuevo.", input);
+    // 1. Leer comando y directorio de los argumentos
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let Comando { accion, directorio } = match parse_args(&args, &cwd)
+        .and_then(|c| comprobar_directorio(&c.directorio).map(|_| c))
+    {
+        Ok(c) if c.accion == Accion::Ayuda => {
+            println!("{}", AYUDA);
+            return;
+        }
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
         }
     };
 
@@ -197,6 +201,10 @@ fn main() {
 
     println!("\nSe encontraron {} grupos de archivos duplicados.", grupos.len());
     println!("Informe guardado en: {}", archivo_salida.display());
+
+    if accion == Accion::Buscar {
+        return;
+    }
 
     // 7. Preguntar si borrar
     println!();
@@ -269,9 +277,120 @@ fn main() {
     }
 }
 
+#[derive(Debug, PartialEq)]
+enum Accion {
+    Buscar,
+    Limpiar,
+    Ayuda,
+}
+
+#[derive(Debug, PartialEq)]
+struct Comando {
+    accion: Accion,
+    directorio: PathBuf,
+}
+
+const AYUDA: &str = "Uso: dupli <comando> [ruta]
+
+Comandos:
+  buscar [ruta]    Busca duplicados y guarda el informe duplicados_*.txt (no borra nada)
+  limpiar [ruta]   Busca duplicados, guarda el informe y, tras confirmar, los envia a la papelera
+
+  ayuda, -h, --help  Muestra esta ayuda
+
+Sin ruta se usa la carpeta actual.";
+
+// args: los argumentos sin el nombre del programa
+fn parse_args(args: &[String], cwd: &Path) -> Result<Comando, String> {
+    let accion = match args.first().map(String::as_str) {
+        None => return Err(AYUDA.to_string()),
+        Some("buscar") => Accion::Buscar,
+        Some("limpiar") => Accion::Limpiar,
+        Some("--help" | "-h" | "ayuda") => Accion::Ayuda,
+        Some(otro) => return Err(format!("ERROR: comando desconocido '{}'.\n\n{}", otro, AYUDA)),
+    };
+    let directorio = match &args[1..] {
+        [] => cwd.to_path_buf(),
+        // PowerShell 5.1 pasa '.\Mis Fotos\' como ".\Mis Fotos\" y Windows convierte \" en una comilla literal
+        [ruta] => PathBuf::from(ruta.trim_end_matches('"')),
+        _ => return Err(format!("ERROR: demasiados argumentos.\n\n{}", AYUDA)),
+    };
+    Ok(Comando { accion, directorio })
+}
+
+fn comprobar_directorio(dir: &Path) -> Result<(), String> {
+    if dir.is_dir() {
+        Ok(())
+    } else {
+        Err(format!("ERROR: '{}' no existe o no es un directorio.", dir.display()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn buscar_sin_ruta_usa_cwd() {
+        let cwd = Path::new(r"C:\actual");
+        assert_eq!(
+            parse_args(&args(&["buscar"]), cwd),
+            Ok(Comando { accion: Accion::Buscar, directorio: cwd.to_path_buf() })
+        );
+    }
+
+    #[test]
+    fn limpiar_con_ruta_usa_esa_ruta() {
+        assert_eq!(
+            parse_args(&args(&["limpiar", r"D:\x"]), Path::new(r"C:\actual")),
+            Ok(Comando { accion: Accion::Limpiar, directorio: PathBuf::from(r"D:\x") })
+        );
+    }
+
+    #[test]
+    fn sin_argumentos_devuelve_ayuda() {
+        assert_eq!(parse_args(&[], Path::new(".")), Err(AYUDA.to_string()));
+    }
+
+    #[test]
+    fn comando_desconocido_es_error() {
+        let err = parse_args(&args(&["borrar"]), Path::new(".")).unwrap_err();
+        assert!(err.contains("borrar") && err.contains(AYUDA));
+    }
+
+    #[test]
+    fn demasiados_argumentos_es_error() {
+        let err = parse_args(&args(&["buscar", "a", "b"]), Path::new(".")).unwrap_err();
+        assert!(err.contains(AYUDA));
+    }
+
+    #[test]
+    fn ruta_con_comilla_final_de_powershell_se_limpia() {
+        let c = parse_args(&args(&["buscar", r#"D:\Mis Fotos""#]), Path::new(".")).unwrap();
+        assert_eq!(c.directorio, PathBuf::from(r"D:\Mis Fotos"));
+    }
+
+    #[test]
+    fn opciones_de_ayuda_devuelven_accion_ayuda() {
+        for op in ["--help", "-h", "ayuda"] {
+            assert_eq!(parse_args(&args(&[op]), Path::new(".")).map(|c| c.accion), Ok(Accion::Ayuda), "{}", op);
+        }
+    }
+
+    #[test]
+    fn directorio_existente_es_valido() {
+        assert_eq!(comprobar_directorio(&std::env::temp_dir()), Ok(()));
+    }
+
+    #[test]
+    fn directorio_inexistente_es_error() {
+        let err = comprobar_directorio(Path::new(r"Z:\no\existe\dupli")).unwrap_err();
+        assert!(err.contains(r"Z:\no\existe\dupli"));
+    }
 
     // Directorio temporal propio para cada test; el test lo borra al terminar
     fn temp_dir(name: &str) -> PathBuf {
