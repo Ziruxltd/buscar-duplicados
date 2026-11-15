@@ -3,6 +3,10 @@ name = "buscar-duplicados"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "dupli"
+path = "src/main.rs"
+
 [dependencies]
 walkdir = "2"
 md5 = "0.7"
