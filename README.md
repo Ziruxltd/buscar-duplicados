@@ -6,7 +6,13 @@ envía las copias a la Papelera de reciclaje (conserva un archivo de cada grupo)
 
 ## Instalación
 
-Necesitas Rust (rustup). Desde la carpeta del proyecto:
+Requisitos:
+
+- Rust instalado con [rustup](https://rustup.rs), con la toolchain MSVC por defecto.
+- Visual Studio (o Build Tools for Visual Studio) con la carga de trabajo
+  "Desarrollo para el escritorio con C++", incluido el SDK de Windows 11.
+
+Desde la carpeta del proyecto:
 
 ```powershell
 cargo install --path .
