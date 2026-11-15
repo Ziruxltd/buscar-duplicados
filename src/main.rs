@@ -3,16 +3,17 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, Write};
+use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
 use rayon::prelude::*;
 use walkdir::WalkDir;
 
-// Calcula el hash MD5 de un archivo (md5::Context implementa Write)
+// Calcula el hash MD5 de un archivo (md5::Context implementa Write).
+// BufReader de 1 MB: io::copy lee directamente de su buffer en vez de usar trozos de 8 KB
 fn compute_md5(path: &Path) -> Option<String> {
-    let mut file = File::open(path).ok()?;
+    let mut file = BufReader::with_capacity(1 << 20, File::open(path).ok()?);
     let mut context = md5::Context::new();
     io::copy(&mut file, &mut context).ok()?;
     Some(format!("{:x}", context.compute()))
