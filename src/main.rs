@@ -44,7 +44,7 @@ fn has_copy_pattern(stem: &str) -> bool {
 // Elige que archivo conservar dentro de un grupo de duplicados:
 // 1. Prefiere los que NO tienen patron " (N)"
 // 2. Entre los candidatos, elige el de nombre mas corto
-fn choose_file_to_keep<'a>(paths: &'a [PathBuf]) -> &'a PathBuf {
+fn choose_file_to_keep(paths: &[PathBuf]) -> &PathBuf {
     let without_copy: Vec<&PathBuf> = paths
         .iter()
         .filter(|p| {
@@ -72,16 +72,16 @@ fn read_line() -> String {
 }
 
 fn main() {
-    // 1. Pedir directorio en bucle hasta que exista
-    let directorio: PathBuf = loop {
-        print!("\nIntroduce la ruta del directorio: ");
-        io::stdout().flush().unwrap();
-        let input = read_line();
-        let path = PathBuf::from(&input);
-        if path.is_dir() {
-            break path;
-        } else {
-            eprintln!("ERROR: El directorio '{}' no existe. Intentalo de nuevo.", input);
+    // 1. Leer comando y directorio de los argumentos
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let Comando { accion, directorio } = match parse_args(&args, &cwd)
+        .and_then(|c| comprobar_directorio(&c.directorio).map(|_| c))
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(1);
         }
     };
 
@@ -167,6 +167,10 @@ fn main() {
 
     println!("\nSe encontraron {} grupos de archivos duplicados.", grupos.len());
     println!("Informe guardado en: {}", archivo_salida.display());
+
+    if accion == Accion::Buscar {
+        return;
+    }
 
     // 7. Preguntar si borrar
     println!();
@@ -274,6 +278,14 @@ fn parse_args(args: &[String], cwd: &Path) -> Result<Comando, String> {
     Ok(Comando { accion, directorio })
 }
 
+fn comprobar_directorio(dir: &Path) -> Result<(), String> {
+    if dir.is_dir() {
+        Ok(())
+    } else {
+        Err(format!("ERROR: '{}' no existe o no es un directorio.", dir.display()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -314,5 +326,16 @@ mod tests {
     fn demasiados_argumentos_es_error() {
         let err = parse_args(&args(&["buscar", "a", "b"]), Path::new(".")).unwrap_err();
         assert!(err.contains(AYUDA));
+    }
+
+    #[test]
+    fn directorio_existente_es_valido() {
+        assert_eq!(comprobar_directorio(&std::env::temp_dir()), Ok(()));
+    }
+
+    #[test]
+    fn directorio_inexistente_es_error() {
+        let err = comprobar_directorio(Path::new(r"Z:\no\existe\dupli")).unwrap_err();
+        assert!(err.contains(r"Z:\no\existe\dupli"));
     }
 }
