@@ -50,6 +50,7 @@ dupli buscar D:\Viaje   # analiza la carpeta indicada
 dupli limpiar           # informe + resumen + doble confirmación + papelera
 dupli limpiar D:\Viaje
 dupli ayuda             # muestra la ayuda (también -h o --help)
+dupli --version         # muestra la versión instalada (también -v)
 ```
 
 Sin ruta, `dupli` usa la carpeta en la que está la PowerShell.

@@ -136,6 +136,10 @@ fn main() {
             println!("{}", AYUDA);
             return;
         }
+        Ok(c) if c.accion == Accion::Version => {
+            println!("dupli {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
         Ok(c) => c,
         Err(e) => {
             eprintln!("{}", e);
@@ -282,6 +286,7 @@ enum Accion {
     Buscar,
     Limpiar,
     Ayuda,
+    Version,
 }
 
 #[derive(Debug, PartialEq)]
@@ -297,6 +302,7 @@ Comandos:
   limpiar [ruta]   Busca duplicados, guarda el informe y, tras confirmar, los envia a la papelera
 
   ayuda, -h, --help  Muestra esta ayuda
+  -v, --version      Muestra la version
 
 Sin ruta se usa la carpeta actual.";
 
@@ -307,6 +313,7 @@ fn parse_args(args: &[String], cwd: &Path) -> Result<Comando, String> {
         Some("buscar") => Accion::Buscar,
         Some("limpiar") => Accion::Limpiar,
         Some("--help" | "-h" | "ayuda") => Accion::Ayuda,
+        Some("--version" | "-v") => Accion::Version,
         Some(otro) => return Err(format!("ERROR: comando desconocido '{}'.\n\n{}", otro, AYUDA)),
     };
     let directorio = match &args[1..] {
@@ -378,6 +385,13 @@ mod tests {
     fn opciones_de_ayuda_devuelven_accion_ayuda() {
         for op in ["--help", "-h", "ayuda"] {
             assert_eq!(parse_args(&args(&[op]), Path::new(".")).map(|c| c.accion), Ok(Accion::Ayuda), "{}", op);
+        }
+    }
+
+    #[test]
+    fn opciones_de_version_devuelven_accion_version() {
+        for op in ["--version", "-v"] {
+            assert_eq!(parse_args(&args(&[op]), Path::new(".")).map(|c| c.accion), Ok(Accion::Version), "{}", op);
         }
     }
 
