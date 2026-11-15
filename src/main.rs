@@ -237,3 +237,32 @@ fn main() {
         println!("  Errores                      : {}", errores);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn paths(names: &[&str]) -> Vec<PathBuf> {
+        names.iter().map(PathBuf::from).collect()
+    }
+
+    #[test]
+    fn copy_pattern_detects_windows_copy_suffix() {
+        assert!(has_copy_pattern("foto (1)"));
+        assert!(has_copy_pattern("foto (12)"));
+        assert!(!has_copy_pattern("foto"));
+        assert!(!has_copy_pattern("(1)"));
+    }
+
+    #[test]
+    fn keeps_original_over_copy() {
+        let p = paths(&["foto (1).jpg", "foto.jpg"]);
+        assert_eq!(choose_file_to_keep(&p), &PathBuf::from("foto.jpg"));
+    }
+
+    #[test]
+    fn all_copies_keeps_shortest_name() {
+        let p = paths(&["foto (12).jpg", "foto (1).jpg"]);
+        assert_eq!(choose_file_to_keep(&p), &PathBuf::from("foto (1).jpg"));
+    }
+}
