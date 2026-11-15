@@ -78,6 +78,10 @@ fn main() {
     let Comando { accion, directorio } = match parse_args(&args, &cwd)
         .and_then(|c| comprobar_directorio(&c.directorio).map(|_| c))
     {
+        Ok(c) if c.accion == Accion::Ayuda => {
+            println!("{}", AYUDA);
+            return;
+        }
         Ok(c) => c,
         Err(e) => {
             eprintln!("{}", e);
@@ -246,6 +250,7 @@ fn main() {
 enum Accion {
     Buscar,
     Limpiar,
+    Ayuda,
 }
 
 #[derive(Debug, PartialEq)]
@@ -268,11 +273,13 @@ fn parse_args(args: &[String], cwd: &Path) -> Result<Comando, String> {
         None => return Err(AYUDA.to_string()),
         Some("buscar") => Accion::Buscar,
         Some("limpiar") => Accion::Limpiar,
+        Some("--help" | "-h" | "ayuda") => Accion::Ayuda,
         Some(otro) => return Err(format!("ERROR: comando desconocido '{}'.\n\n{}", otro, AYUDA)),
     };
     let directorio = match &args[1..] {
         [] => cwd.to_path_buf(),
-        [ruta] => PathBuf::from(ruta),
+        // PowerShell 5.1 pasa '.\Mis Fotos\' como ".\Mis Fotos\" y Windows convierte \" en una comilla literal
+        [ruta] => PathBuf::from(ruta.trim_end_matches('"')),
         _ => return Err(format!("ERROR: demasiados argumentos.\n\n{}", AYUDA)),
     };
     Ok(Comando { accion, directorio })
@@ -326,6 +333,19 @@ mod tests {
     fn demasiados_argumentos_es_error() {
         let err = parse_args(&args(&["buscar", "a", "b"]), Path::new(".")).unwrap_err();
         assert!(err.contains(AYUDA));
+    }
+
+    #[test]
+    fn ruta_con_comilla_final_de_powershell_se_limpia() {
+        let c = parse_args(&args(&["buscar", r#"D:\Mis Fotos""#]), Path::new(".")).unwrap();
+        assert_eq!(c.directorio, PathBuf::from(r"D:\Mis Fotos"));
+    }
+
+    #[test]
+    fn opciones_de_ayuda_devuelven_accion_ayuda() {
+        for op in ["--help", "-h", "ayuda"] {
+            assert_eq!(parse_args(&args(&[op]), Path::new(".")).map(|c| c.accion), Ok(Accion::Ayuda), "{}", op);
+        }
     }
 
     #[test]
