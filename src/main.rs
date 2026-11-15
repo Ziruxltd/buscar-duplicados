@@ -69,7 +69,7 @@ fn has_copy_pattern(stem: &str) -> bool {
 // Elige que archivo conservar dentro de un grupo de duplicados:
 // 1. Prefiere los que NO tienen patron " (N)"
 // 2. Entre los candidatos, elige el de nombre mas corto
-fn choose_file_to_keep<'a>(paths: &'a [PathBuf]) -> &'a PathBuf {
+fn choose_file_to_keep(paths: &[PathBuf]) -> &PathBuf {
     let without_copy: Vec<&PathBuf> = paths
         .iter()
         .filter(|p| {
