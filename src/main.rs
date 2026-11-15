@@ -26,6 +26,18 @@ fn compute_md5(path: &Path) -> Option<String> {
     Some(format!("{:x}", context.compute()))
 }
 
+const MEDIA_EXTENSIONS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "webp", "heic", "heif", "raw", "cr2", "nef",
+    "arw", "dng", "mp4", "mov", "avi", "mkv", "m4v", "3gp", "wmv", "mts",
+];
+
+// Solo fotos y videos: evita borrar desktop.ini, Thumbs.db, etc.
+fn is_media(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| MEDIA_EXTENSIONS.iter().any(|m| e.eq_ignore_ascii_case(m)))
+}
+
 // Detecta si el nombre de archivo (sin extension) termina en patron de copia: " (N)"
 fn has_copy_pattern(stem: &str) -> bool {
     let s = stem.trim_end();
@@ -93,18 +105,20 @@ fn main() {
     println!("\nAnalizando archivos en: {}", directorio.display());
     println!("Calculando hashes en paralelo (puede tardar en directorios grandes)...");
 
-    // 2. Recopilar todos los archivos recursivamente (excluye archivos de 0 bytes)
+    // 2. Recopilar fotos y videos recursivamente (excluye archivos de 0 bytes)
     let archivos: Vec<PathBuf> = WalkDir::new(&directorio)
         .into_iter()
         .filter_map(|e| e.ok())
         .filter(|e| {
-            e.file_type().is_file() && e.metadata().map(|m| m.len() > 0).unwrap_or(false)
+            e.file_type().is_file()
+                && is_media(e.path())
+                && e.metadata().map(|m| m.len() > 0).unwrap_or(false)
         })
         .map(|e| e.path().to_path_buf())
         .collect();
 
     if archivos.is_empty() {
-        println!("El directorio no contiene archivos (o todos tienen 0 bytes).");
+        println!("El directorio no contiene fotos ni videos (o todos tienen 0 bytes).");
         return;
     }
 
@@ -277,5 +291,15 @@ mod tests {
             ("b".to_string(), paths(&["y.jpg", "y (1).jpg", "y (2).jpg"])),
         ];
         assert_eq!(count_to_trash(&grupos), 3);
+    }
+
+    #[test]
+    fn only_photos_and_videos_are_media() {
+        assert!(is_media(Path::new("C:\\fotos\\IMG.JPG")));
+        assert!(is_media(Path::new("video.Mov")));
+        assert!(is_media(Path::new("raw.dng")));
+        assert!(!is_media(Path::new("desktop.ini")));
+        assert!(!is_media(Path::new("Thumbs.db")));
+        assert!(!is_media(Path::new("sin_extension")));
     }
 }
