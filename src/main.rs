@@ -212,9 +212,11 @@ fn main() {
     }
 
     // 8. Mostrar resumen de lo que se va a hacer antes de borrar
+    // Elegir una sola vez: el borrado debe hacer exactamente lo que el usuario confirma
+    let conservados: Vec<&PathBuf> = grupos.iter().map(|(_, r)| choose_file_to_keep(r)).collect();
+
     println!("\n--- Resumen de acciones ---");
-    for (_, rutas) in &grupos {
-        let conservar = choose_file_to_keep(rutas);
+    for ((_, rutas), &conservar) in grupos.iter().zip(&conservados) {
         for ruta in rutas {
             if ruta == conservar {
                 println!("  [CONSERVAR] {}", ruta.display());
@@ -239,8 +241,7 @@ fn main() {
     let mut borrados: usize = 0;
     let mut errores: usize = 0;
 
-    for (_, rutas) in &grupos {
-        let conservar = choose_file_to_keep(rutas);
+    for ((_, rutas), &conservar) in grupos.iter().zip(&conservados) {
         for ruta in rutas {
             if ruta == conservar {
                 continue;
