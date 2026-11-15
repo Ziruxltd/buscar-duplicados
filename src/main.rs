@@ -237,3 +237,82 @@ fn main() {
         println!("  Errores                      : {}", errores);
     }
 }
+
+#[derive(Debug, PartialEq)]
+enum Accion {
+    Buscar,
+    Limpiar,
+}
+
+#[derive(Debug, PartialEq)]
+struct Comando {
+    accion: Accion,
+    directorio: PathBuf,
+}
+
+const AYUDA: &str = "Uso: dupli <comando> [ruta]
+
+Comandos:
+  buscar [ruta]    Busca duplicados y guarda el informe duplicados_*.txt (no borra nada)
+  limpiar [ruta]   Busca duplicados, guarda el informe y, tras confirmar, los envia a la papelera
+
+Sin ruta se usa la carpeta actual.";
+
+// args: los argumentos sin el nombre del programa
+fn parse_args(args: &[String], cwd: &Path) -> Result<Comando, String> {
+    let accion = match args.first().map(String::as_str) {
+        None => return Err(AYUDA.to_string()),
+        Some("buscar") => Accion::Buscar,
+        Some("limpiar") => Accion::Limpiar,
+        Some(otro) => return Err(format!("ERROR: comando desconocido '{}'.\n\n{}", otro, AYUDA)),
+    };
+    let directorio = match &args[1..] {
+        [] => cwd.to_path_buf(),
+        [ruta] => PathBuf::from(ruta),
+        _ => return Err(format!("ERROR: demasiados argumentos.\n\n{}", AYUDA)),
+    };
+    Ok(Comando { accion, directorio })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn buscar_sin_ruta_usa_cwd() {
+        let cwd = Path::new(r"C:\actual");
+        assert_eq!(
+            parse_args(&args(&["buscar"]), cwd),
+            Ok(Comando { accion: Accion::Buscar, directorio: cwd.to_path_buf() })
+        );
+    }
+
+    #[test]
+    fn limpiar_con_ruta_usa_esa_ruta() {
+        assert_eq!(
+            parse_args(&args(&["limpiar", r"D:\x"]), Path::new(r"C:\actual")),
+            Ok(Comando { accion: Accion::Limpiar, directorio: PathBuf::from(r"D:\x") })
+        );
+    }
+
+    #[test]
+    fn sin_argumentos_devuelve_ayuda() {
+        assert_eq!(parse_args(&[], Path::new(".")), Err(AYUDA.to_string()));
+    }
+
+    #[test]
+    fn comando_desconocido_es_error() {
+        let err = parse_args(&args(&["borrar"]), Path::new(".")).unwrap_err();
+        assert!(err.contains("borrar") && err.contains(AYUDA));
+    }
+
+    #[test]
+    fn demasiados_argumentos_es_error() {
+        let err = parse_args(&args(&["buscar", "a", "b"]), Path::new(".")).unwrap_err();
+        assert!(err.contains(AYUDA));
+    }
+}
