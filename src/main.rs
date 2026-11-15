@@ -28,7 +28,8 @@ fn compute_md5(path: &Path) -> Option<String> {
 
 const MEDIA_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff", "webp", "heic", "heif", "raw", "cr2", "nef",
-    "arw", "dng", "mp4", "mov", "avi", "mkv", "m4v", "3gp", "wmv", "mts",
+    "arw", "dng", "avif", "raf", "orf", "rw2", "mp4", "mov", "avi", "mkv", "m4v", "3gp", "wmv",
+    "mts", "mpg", "mpeg", "webm",
 ];
 
 // Solo fotos y videos: evita borrar desktop.ini, Thumbs.db, etc.
@@ -81,7 +82,8 @@ fn choose_file_to_keep(paths: &[PathBuf]) -> &PathBuf {
         .min_by_key(|p| {
             let len = p.file_name().and_then(|n| n.to_str()).unwrap_or("").len();
             let modified = std::fs::metadata(p).and_then(|m| m.modified()).ok();
-            (len, modified, *p)
+            // fecha ilegible al final: None < Some haria conservar un archivo que quiza ya no existe
+            (len, modified.is_none(), modified, *p)
         })
         .unwrap()
 }
@@ -307,6 +309,9 @@ mod tests {
         assert!(is_media(Path::new("C:\\fotos\\IMG.JPG")));
         assert!(is_media(Path::new("video.Mov")));
         assert!(is_media(Path::new("raw.dng")));
+        for ext in ["mpg", "mpeg", "webm", "avif", "raf", "orf", "rw2"] {
+            assert!(is_media(Path::new(&format!("a.{}", ext))), "{}", ext);
+        }
         assert!(!is_media(Path::new("desktop.ini")));
         assert!(!is_media(Path::new("Thumbs.db")));
         assert!(!is_media(Path::new("sin_extension")));
@@ -355,6 +360,15 @@ mod tests {
             "path",
             &[("Viaje Roma/IMG_1.jpg", 1_000_000_000), ("Descargas/IMG_1.jpg", 1_000_000_000)],
         );
+        let kept = choose_file_to_keep(&p).clone();
+        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(kept, p[1]);
+    }
+
+    #[test]
+    fn unreadable_mtime_never_wins_tie_break() {
+        let (root, mut p) = make_files("missing", &[("B/IMG_1.jpg", 1_000_000_000)]);
+        p.insert(0, root.join("A/IMG_1.jpg")); // no existe: alfabeticamente primero
         let kept = choose_file_to_keep(&p).clone();
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(kept, p[1]);
