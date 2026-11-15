@@ -3,27 +3,53 @@
 
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::{self, BufReader, Read, Write};
+use std::io::{self, BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use chrono::Local;
 use rayon::prelude::*;
 use walkdir::WalkDir;
 
-// Calcula el hash MD5 de un archivo usando un buffer grande para I/O eficiente
+// Calcula el hash MD5 de un archivo (md5::Context implementa Write).
+// BufReader de 1 MB: io::copy lee directamente de su buffer en vez de usar trozos de 8 KB
 fn compute_md5(path: &Path) -> Option<String> {
-    let file = File::open(path).ok()?;
-    let mut reader = BufReader::with_capacity(1024 * 1024, file);
+    let mut file = BufReader::with_capacity(1 << 20, File::open(path).ok()?);
     let mut context = md5::Context::new();
-    let mut buffer = [0u8; 65536];
-    loop {
-        let n = reader.read(&mut buffer).ok()?;
-        if n == 0 {
-            break;
-        }
-        context.consume(&buffer[..n]);
-    }
+    io::copy(&mut file, &mut context).ok()?;
     Some(format!("{:x}", context.compute()))
+}
+
+// Archivos de distinto tamaño nunca son duplicados: solo hay que hashear los de tamaño repetido
+fn paths_to_hash(files: Vec<(PathBuf, u64)>) -> Vec<PathBuf> {
+    let mut by_size: HashMap<u64, Vec<PathBuf>> = HashMap::new();
+    for (path, size) in files {
+        by_size.entry(size).or_default().push(path);
+    }
+    by_size.into_values().filter(|v| v.len() > 1).flatten().collect()
+}
+
+// Calcula hashes en paralelo de los candidatos y devuelve los grupos con duplicados, ordenados por hash
+fn find_duplicate_groups(files: Vec<(PathBuf, u64)>) -> Vec<(String, Vec<PathBuf>)> {
+    let results: Vec<(PathBuf, String)> = paths_to_hash(files)
+        .into_par_iter()
+        .filter_map(|path| match compute_md5(&path) {
+            Some(hash) => Some((path, hash)),
+            None => {
+                eprintln!("  No se pudo leer: {}", path.display());
+                None
+            }
+        })
+        .collect();
+
+    let mut hashes: HashMap<String, Vec<PathBuf>> = HashMap::new();
+    for (path, hash) in results {
+        hashes.entry(hash).or_default().push(path);
+    }
+
+    let mut grupos: Vec<(String, Vec<PathBuf>)> =
+        hashes.into_iter().filter(|(_, v)| v.len() > 1).collect();
+    grupos.sort_by(|a, b| a.0.cmp(&b.0));
+    grupos
 }
 
 const MEDIA_EXTENSIONS: &[&str] = &[
@@ -116,16 +142,15 @@ fn main() {
     println!("\nAnalizando archivos en: {}", directorio.display());
     println!("Calculando hashes en paralelo (puede tardar en directorios grandes)...");
 
-    // 2. Recopilar fotos y videos recursivamente (excluye archivos de 0 bytes)
-    let archivos: Vec<PathBuf> = WalkDir::new(&directorio)
+    // 2. Recopilar fotos y videos recursivamente con su tamaño (excluye archivos de 0 bytes)
+    let archivos: Vec<(PathBuf, u64)> = WalkDir::new(&directorio)
         .into_iter()
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.file_type().is_file()
-                && is_media(e.path())
-                && e.metadata().map(|m| m.len() > 0).unwrap_or(false)
+        .filter(|e| e.file_type().is_file() && is_media(e.path()))
+        .filter_map(|e| {
+            let size = e.metadata().ok()?.len();
+            (size > 0).then(|| (e.path().to_path_buf(), size))
         })
-        .map(|e| e.path().to_path_buf())
         .collect();
 
     if archivos.is_empty() {
@@ -135,37 +160,13 @@ fn main() {
 
     println!("Encontrados {} archivos. Calculando hashes en paralelo...", archivos.len());
 
-    // 3. Calcular hashes en paralelo con rayon
-    let results: Vec<(PathBuf, String)> = archivos
-        .par_iter()
-        .filter_map(|path| match compute_md5(path) {
-            Some(hash) => Some((path.clone(), hash)),
-            None => {
-                eprintln!("  No se pudo leer: {}", path.display());
-                None
-            }
-        })
-        .collect();
-
-    // 4. Agrupar por hash
-    let mut hashes: HashMap<String, Vec<PathBuf>> = HashMap::new();
-    for (path, hash) in results {
-        hashes.entry(hash).or_default().push(path);
-    }
-
-    // 5. Filtrar solo grupos con duplicados
-    let mut grupos: Vec<(String, Vec<PathBuf>)> = hashes
-        .into_iter()
-        .filter(|(_, v)| v.len() > 1)
-        .collect();
+    // 3-5. Agrupar por tamaño, hashear solo los de tamaño repetido y agrupar por hash
+    let grupos = find_duplicate_groups(archivos);
 
     if grupos.is_empty() {
         println!("\nNo se encontraron archivos duplicados.");
         return;
     }
-
-    // Ordenar para salida determinista
-    grupos.sort_by(|a, b| a.0.cmp(&b.0));
 
     // 6. Generar informe TXT
     let fecha = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
@@ -271,6 +272,69 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Directorio temporal propio para cada test; el test lo borra al terminar
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir()
+            .join(format!("buscar_duplicados_{}_{}", name, std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn compute_md5_de_contenido_conocido() {
+        let dir = temp_dir("md5");
+        let f = dir.join("hello.txt");
+        std::fs::write(&f, b"hello").unwrap();
+        let hash = compute_md5(&f);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(hash.as_deref(), Some("5d41402abc4b2a76b9719d911017c592"));
+    }
+
+    #[test]
+    fn tamanos_unicos_no_se_hashea_nada() {
+        let files = vec![(PathBuf::from("a"), 1), (PathBuf::from("b"), 2)];
+        assert!(paths_to_hash(files).is_empty());
+    }
+
+    #[test]
+    fn solo_se_hashean_los_de_tamano_repetido() {
+        let files = vec![
+            (PathBuf::from("a"), 10),
+            (PathBuf::from("b"), 20),
+            (PathBuf::from("c"), 10),
+        ];
+        let mut got = paths_to_hash(files);
+        got.sort();
+        assert_eq!(got, vec![PathBuf::from("a"), PathBuf::from("c")]);
+    }
+
+    #[test]
+    fn grupos_duplicados_con_archivos_reales() {
+        let dir = temp_dir("grupos");
+        let contenidos: [(&str, &[u8]); 4] = [
+            ("uno.jpg", b"abcd"),
+            ("uno (1).jpg", b"abcd"),
+            ("mismo_tamano.jpg", b"wxyz"),
+            ("otro_tamano.jpg", b"abcdef"),
+        ];
+        let files: Vec<(PathBuf, u64)> = contenidos
+            .iter()
+            .map(|(name, data)| {
+                let p = dir.join(name);
+                std::fs::write(&p, data).unwrap();
+                (p, data.len() as u64)
+            })
+            .collect();
+        let grupos = find_duplicate_groups(files);
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        assert_eq!(grupos.len(), 1);
+        let mut rutas = grupos[0].1.clone();
+        rutas.sort();
+        assert_eq!(rutas, vec![dir.join("uno (1).jpg"), dir.join("uno.jpg")]);
+    }
 
     fn paths(names: &[&str]) -> Vec<PathBuf> {
         names.iter().map(PathBuf::from).collect()
